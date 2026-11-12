@@ -1483,6 +1483,7 @@ impl WgpuRenderer {
             "pixel buffer does not match {width}x{height}"
         );
 
+        let perf_t0 = std::time::Instant::now();
         self.update_drawable_size(size);
         self.atlas.before_frame();
         self.ensure_intermediate_textures();
@@ -1496,6 +1497,7 @@ impl WgpuRenderer {
             .map(|readback| readback.view.clone())
             .context("readback target was just created")?;
         self.record_frame(scene, &view)?;
+        let perf_t1 = std::time::Instant::now();
 
         let resources = self.resources();
         let readback = resources
@@ -1542,6 +1544,7 @@ impl WgpuRenderer {
             .recv()
             .context("the readback map callback never ran")?
             .map_err(|error| anyhow::anyhow!("mapping the readback buffer: {error}"))?;
+        let perf_t2 = std::time::Instant::now();
 
         {
             let mapped = slice.get_mapped_range();
@@ -1555,6 +1558,12 @@ impl WgpuRenderer {
             }
         }
         readback.buffer.unmap();
+        let perf_t3 = std::time::Instant::now();
+        *PERF_RENDER.lock() = [
+            (perf_t1 - perf_t0).as_secs_f64() * 1e3,
+            (perf_t2 - perf_t1).as_secs_f64() * 1e3,
+            (perf_t3 - perf_t2).as_secs_f64() * 1e3,
+        ];
 
         if let Some(error) = self.last_error.lock().unwrap().take() {
             anyhow::bail!("GPU error during offscreen frame: {error}");
@@ -2508,3 +2517,6 @@ mod tests {
         assert!(WEBGL_SHADERS.contains("@group(1) @binding(1) var t_surface: texture_2d<f32>"));
     }
 }
+
+/// perf scratch: [record+submit ms, GPU wait (lavapipe raster) ms, readback copy ms] of the last offscreen frame.
+pub static PERF_RENDER: parking_lot::Mutex<[f64; 3]> = parking_lot::Mutex::new([0.0; 3]);
